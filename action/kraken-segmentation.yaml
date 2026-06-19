@@ -1,0 +1,37 @@
+version: 1
+id: kraken-segmentation
+name: Kraken Segmentation
+description: Runs Kraken OCR baseline segmentation on selected page images and imports PAGE XML.
+category: LAYOUT
+targets:
+  - PAGE
+  - REGION
+
+endpoint:
+  url: https://kraken.example.org/dispatch
+  healthUrl: https://kraken.example.org/health
+  timeoutSeconds: 30
+  auth:
+    type: hmac
+    secretRef: kraken-segmentation-v1
+
+access:
+  execute: CURATOR
+
+locking:
+  mode: PAGES
+
+inputs:
+  images: true
+  xml: true
+
+outputs:
+  xml:
+    enabled: true
+    mode: upsert
+  images:
+    enabled: false
+
+concurrency:
+  maxActiveRuns: 1
+  scope: PROJECT

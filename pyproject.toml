@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "larex-action-kraken"
+version = "0.1.0"
+description = "Kraken-based LAREX Actions processor for PAGE XML layout segmentation and OCR workflows."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [
+  { name = "OCR4all" }
+]
+dependencies = [
+  "kraken==7.0.2",
+  "larex-action-sdk[fastapi]>=0.6,<0.7",
+  "lxml>=5,<7",
+  "pillow>=10,<13",
+  "uvicorn[standard]>=0.38,<0.39",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8,<9",
+  "pytest-asyncio>=1,<2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/larex_action_kraken"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
