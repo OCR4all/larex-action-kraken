@@ -700,7 +700,7 @@ wheels = [
 
 [[package]]
 name = "larex-action-kraken"
-version = "0.1.2"
+version = "0.1.3"
 source = { editable = "." }
 dependencies = [
     { name = "kraken" },
@@ -719,7 +719,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "kraken", specifier = "==7.0.2" },
-    { name = "larex-action-sdk", extras = ["fastapi"], specifier = ">=0.6,<0.7" },
+    { name = "larex-action-sdk", extras = ["fastapi"], specifier = ">=0.7,<0.8" },
     { name = "lxml", specifier = ">=5,<7" },
     { name = "pillow", specifier = ">=10,<13" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8,<9" },
@@ -730,15 +730,15 @@ provides-extras = ["test"]
 
 [[package]]
 name = "larex-action-sdk"
-version = "0.6.0"
+version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/92/e0/e70550c1b547ffaeeffcfdc5aa1a9f880bbbc39d5d2efebaed5507ff34c0/larex_action_sdk-0.6.0.tar.gz", hash = "sha256:3171e2e3ad685cab042857ac18adc0e45f120ac941ea0b235bd0f3d22ddfae1e", size = 34838, upload-time = "2026-06-03T08:14:47.809Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/63/68/70c7dba7f1ff8e4c9e6640e39da69b8227ecf9455f77fa5b3cd37076625a/larex_action_sdk-0.7.0.tar.gz", hash = "sha256:6605244063213ab5bc477cf8a7fb2d6ae2bff3650100385e2f9dfab204ff0272", size = 35498, upload-time = "2026-06-19T12:45:33.126Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/43/6d/43523ae7709c2a0a735c735b1a91b737962e23298851c8a0a7893a0d7012/larex_action_sdk-0.6.0-py3-none-any.whl", hash = "sha256:af2ecea5fc593fe56058c371d14fb90b5518c0f85d831a288240f80dc1803e42", size = 16227, upload-time = "2026-06-03T08:14:46.734Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/50/e687f78b76e5f884a87d34e3d0371ecc3e4b58c94df2c1bfed9aca5a9870/larex_action_sdk-0.7.0-py3-none-any.whl", hash = "sha256:5299776e411b743d3bf984e9f83393d4cea0ebf257f8cd02b9205fc5a864a23e", size = 16792, upload-time = "2026-06-19T12:45:31.851Z" },
 ]
 
 [package.optional-dependencies]
