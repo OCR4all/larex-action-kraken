@@ -50,11 +50,11 @@ IMAGE_EXTENSIONS = {
 async def process_run(ctx: ActionContext) -> None:
     action_input = await ctx.pull_input()
     if not action_input.pages:
-        await ctx.complete(ctx.result_builder(), "Kraken segmentation received no pages.")
+        await ctx.complete(message="Kraken segmentation received no pages.")
         return
 
-    results = ctx.result_builder()
     total = len(action_input.pages)
+    xml_count = 0
 
     with tempfile.TemporaryDirectory(prefix="larex-kraken-") as temp_dir:
         work_dir = Path(temp_dir)
@@ -68,11 +68,18 @@ async def process_run(ctx: ActionContext) -> None:
 
             async with ctx.step(f"Kraken segmentation for {page.name}"):
                 content = await segment_page(ctx, action_input, page, work_dir)
+                results = ctx.result_builder()
                 results.add_xml_bytes(
                     page_id=page.id,
                     content=content,
                     file_name=f"{safe_stem(page.name or page.id)}.xml",
                 )
+                await ctx.submit_page_results(
+                    page.id,
+                    results,
+                    f"Finished segmentation for page {index}/{total}",
+                )
+                xml_count += 1
 
             await ctx.heartbeat(
                 page_progress(index, total),
@@ -80,7 +87,7 @@ async def process_run(ctx: ActionContext) -> None:
                 raise_on_cancel=True,
             )
 
-    await ctx.complete(results, result_message(results))
+    await ctx.complete(message=result_message(xml_count))
 
 
 async def segment_page(ctx: ActionContext, action_input, page, work_dir: Path) -> bytes:
@@ -384,8 +391,7 @@ def safe_stem(value: str) -> str:
     return stem[:96] or "page"
 
 
-def result_message(results) -> str:
-    xml_count = sum(1 for file in results.files if file.type == "xml")
+def result_message(xml_count: int) -> str:
     return f"Kraken segmentation produced {xml_count} PAGE XML file(s)."
 
 

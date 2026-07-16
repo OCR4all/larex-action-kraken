@@ -4,12 +4,17 @@ Kraken-based LAREX Actions processor for PAGE XML layout segmentation and OCR wo
 
 This service receives LAREX Actions dispatches, downloads selected page images and PAGE XML, runs Kraken baseline segmentation, and uploads PAGE XML results back to LAREX.
 
+Each PAGE XML result is submitted immediately after its page finishes. LAREX can
+therefore import the annotation and unlock the page while later pages are still
+running. The processor requires a LAREX server that advertises incremental page
+result support.
+
 ## Features
 
 - PAGE-targeted baseline segmentation
 - REGION-targeted segmentation for selected PAGE XML text regions
 - HMAC dispatch verification through `larex-action-sdk`
-- Result upload through the LAREX per-run callback API
+- Incremental per-page result upload through the LAREX callback API
 - CPU by default, with configurable Kraken device and precision for GPU hosts
 
 ## Action Definition
