@@ -731,14 +731,14 @@ provides-extras = ["test"]
 [[package]]
 name = "larex-action-sdk"
 version = "0.8.0"
-source = { registry = "../larex-action-sdk/dist" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
 ]
-sdist = { path = "larex_action_sdk-0.8.0.tar.gz" }
+sdist = { url = "https://files.pythonhosted.org/packages/52/95/78eea434ab8357a82badc0ee7e96fcb693fe0ca68dec9e11c5a723e057f0/larex_action_sdk-0.8.0.tar.gz", hash = "sha256:2646f18223ec2f6e25bbeb984e3c54b0223ee647edb9f5efb72ae9fe70b9cd62", size = 36593, upload-time = "2026-07-16T08:22:09.459Z" }
 wheels = [
-    { path = "larex_action_sdk-0.8.0-py3-none-any.whl" },
+    { url = "https://files.pythonhosted.org/packages/a6/bc/b1f6d15e0771f6db4cbe1d1673325253cbd8a9563a15d75c8e3b2ec03b9e/larex_action_sdk-0.8.0-py3-none-any.whl", hash = "sha256:e45ea7b5c0749985d9e64510b7bbe185c8323644022b54b0a51a4464bfab4dba", size = 17486, upload-time = "2026-07-16T08:22:08.316Z" },
 ]
 
 [package.optional-dependencies]
