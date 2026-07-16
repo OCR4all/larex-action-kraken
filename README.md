@@ -45,6 +45,11 @@ Create the endpoint secret in LAREX under **Admin -> Actions -> Endpoint Secrets
 | `KRAKEN_TEXT_DIRECTION` | `horizontal-lr` | Text direction passed to Kraken segmentation. |
 | `KRAKEN_SEGMENTATION_MODEL` | empty | Optional Kraken segmentation model path/name. |
 | `KRAKEN_MAX_PROCESS_SECONDS` | `900` | Per-page Kraken subprocess timeout. |
+| `KRAKEN_MAX_CONCURRENT_RUNS` | `1` | Maximum Kraken runs admitted concurrently in one processor instance. Increase only after measuring host/GPU memory. |
+
+`/health` is a liveness endpoint. `/ready` returns `503` while all configured run
+slots are occupied, allowing an orchestrator to stop routing additional work to a
+busy instance. LAREX itself may continue using `/health` for processor health checks.
 
 When deploying behind a reverse proxy path such as `/kraken`, preserve that path
 when proxying to the container and set:

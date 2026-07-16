@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import copy
 import os
 import re
@@ -34,7 +35,9 @@ PRECISION = os.getenv("KRAKEN_PRECISION", "32-true")
 TEXT_DIRECTION = os.getenv("KRAKEN_TEXT_DIRECTION", "horizontal-lr")
 SEGMENTATION_MODEL = os.getenv("KRAKEN_SEGMENTATION_MODEL", "").strip()
 MAX_PROCESS_SECONDS = positive_int_env("KRAKEN_MAX_PROCESS_SECONDS", 900)
+MAX_CONCURRENT_RUNS = positive_int_env("KRAKEN_MAX_CONCURRENT_RUNS", 1)
 PROGRESS_COMPLETE_BEFORE_UPLOAD = 95
+RUN_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_RUNS)
 
 IMAGE_EXTENSIONS = {
     "image/jpeg": ".jpg",
@@ -48,6 +51,11 @@ IMAGE_EXTENSIONS = {
 
 
 async def process_run(ctx: ActionContext) -> None:
+    async with RUN_SEMAPHORE:
+        await _process_run(ctx)
+
+
+async def _process_run(ctx: ActionContext) -> None:
     action_input = await ctx.pull_input()
     if not action_input.pages:
         await ctx.complete(message="Kraken segmentation received no pages.")
@@ -67,11 +75,11 @@ async def process_run(ctx: ActionContext) -> None:
             )
 
             async with ctx.step(f"Kraken segmentation for {page.name}"):
-                content = await segment_page(ctx, action_input, page, work_dir)
+                output_path = await segment_page(ctx, action_input, page, work_dir)
                 results = ctx.result_builder()
-                results.add_xml_bytes(
+                results.add_xml_path(
                     page_id=page.id,
-                    content=content,
+                    path=output_path,
                     file_name=f"{safe_stem(page.name or page.id)}.xml",
                 )
                 await ctx.submit_page_results(
@@ -90,43 +98,51 @@ async def process_run(ctx: ActionContext) -> None:
     await ctx.complete(message=result_message(xml_count))
 
 
-async def segment_page(ctx: ActionContext, action_input, page, work_dir: Path) -> bytes:
+async def segment_page(ctx: ActionContext, action_input, page, work_dir: Path) -> Path:
     if not page.images:
         raise ValueError(f"Page {page.id} does not expose an image input.")
 
     image = page.images[0]
     image_path = work_dir / safe_file_name(image.file_name, page.name, image.mime_type)
     output_path = work_dir / f"{safe_stem(page.name or page.id)}.xml"
-    image_bytes = await ctx.download_bytes(image)
-    image_path.write_bytes(image_bytes)
+    await ctx.download_to_path(image, image_path)
 
     if is_region_target(action_input):
-        return await segment_selected_regions(ctx, action_input, page, image_bytes, work_dir)
+        return await segment_selected_regions(ctx, action_input, page, image_path, work_dir)
 
     await run_kraken(ctx, image_path, output_path)
-    return output_path.read_bytes()
+    return output_path
 
 
-async def segment_selected_regions(ctx: ActionContext, action_input, page, image_bytes: bytes, work_dir: Path) -> bytes:
+async def segment_selected_regions(
+    ctx: ActionContext,
+    action_input,
+    page,
+    image_path: Path,
+    work_dir: Path,
+) -> Path:
     if not page.xml:
         raise ValueError(f"Page {page.id} does not expose PAGE XML for scoped region import.")
 
-    xml_bytes = await ctx.download_bytes(page.xml[0])
-    page_image_size = page_xml_image_size(xml_bytes)
+    original_xml_path = work_dir / f"{safe_stem(page.id)}-original.xml"
+    output_xml_path = work_dir / f"{safe_stem(page.name or page.id)}.xml"
+    await ctx.download_to_path(page.xml[0], original_xml_path)
+    original_root = parse_xml(original_xml_path.read_bytes())
+    page_image_size = page_xml_image_size_from_root(original_root)
     for region_id in selected_region_ids(action_input, page.id):
         await ctx.check_cancelled()
-        region_points = page_xml_region_points(xml_bytes, region_id)
-        crop = crop_target_image(
-            image_bytes,
+        region_points = page_xml_region_points_from_root(original_root, region_id)
+        crop_path = work_dir / f"{safe_stem(region_id)}.png"
+        crop = crop_target_image_to_path(
+            image_path,
             region_points,
+            crop_path,
             source_size=page_image_size,
         )
-        crop_path = work_dir / f"{safe_stem(region_id)}.png"
         crop_output_path = work_dir / f"{safe_stem(region_id)}.xml"
-        crop_path.write_bytes(crop.content)
         await run_kraken(ctx, crop_path, crop_output_path)
-        xml_bytes = merge_region_layout_xml(
-            xml_bytes,
+        merge_region_layout_root(
+            original_root,
             crop_output_path.read_bytes(),
             region_id,
             crop.offset_x,
@@ -134,7 +150,8 @@ async def segment_selected_regions(ctx: ActionContext, action_input, page, image
             crop.scale_x,
             crop.scale_y,
         )
-    return xml_bytes
+    output_xml_path.write_bytes(etree.tostring(original_root, encoding="utf-8", xml_declaration=True))
+    return output_xml_path
 
 
 def is_region_target(action_input) -> bool:
@@ -207,6 +224,14 @@ class TargetCrop:
     scale_y: float
 
 
+@dataclass(frozen=True)
+class TargetCropGeometry:
+    offset_x: float
+    offset_y: float
+    scale_x: float
+    scale_y: float
+
+
 def crop_target_image(
     image_bytes: bytes,
     points: list[tuple[float, float]],
@@ -217,28 +242,7 @@ def crop_target_image(
         raise ValueError("Target region does not contain polygon coordinates.")
 
     with Image.open(BytesIO(image_bytes)) as image:
-        source_width, source_height = source_size or image.size
-        if source_width <= 0 or source_height <= 0:
-            raise ValueError("PAGE XML image dimensions are invalid.")
-
-        scale_x = image.width / source_width
-        scale_y = image.height / source_height
-        source_left = max(0.0, min(point[0] for point in points))
-        source_top = max(0.0, min(point[1] for point in points))
-        source_right = min(float(source_width), max(point[0] for point in points))
-        source_bottom = min(float(source_height), max(point[1] for point in points))
-
-        left = max(0, min(image.width, int(source_left * scale_x)))
-        top = max(0, min(image.height, int(source_top * scale_y)))
-        right = max(0, min(image.width, int(source_right * scale_x + 0.999)))
-        bottom = max(0, min(image.height, int(source_bottom * scale_y + 0.999)))
-        if right <= left or bottom <= top:
-            raise ValueError(
-                "Target region produces an empty crop "
-                f"(image={image.width}x{image.height}, source={source_width}x{source_height}, "
-                f"bbox={source_left},{source_top},{source_right},{source_bottom})."
-            )
-        crop = image.crop((left, top, right, bottom))
+        crop, source_left, source_top, scale_x, scale_y = crop_image(image, points, source_size)
         output = BytesIO()
         crop.save(output, format="PNG")
         return TargetCrop(
@@ -250,8 +254,53 @@ def crop_target_image(
         )
 
 
+def crop_target_image_to_path(
+    image_path: Path,
+    points: list[tuple[float, float]],
+    output_path: Path,
+    *,
+    source_size: tuple[int, int] | None = None,
+) -> TargetCropGeometry:
+    if not points:
+        raise ValueError("Target region does not contain polygon coordinates.")
+    with Image.open(image_path) as image:
+        crop, offset_x, offset_y, scale_x, scale_y = crop_image(image, points, source_size)
+        crop.save(output_path, format="PNG")
+    return TargetCropGeometry(offset_x, offset_y, scale_x, scale_y)
+
+
+def crop_image(
+    image: Image.Image,
+    points: list[tuple[float, float]],
+    source_size: tuple[int, int] | None,
+) -> tuple[Image.Image, float, float, float, float]:
+    source_width, source_height = source_size or image.size
+    if source_width <= 0 or source_height <= 0:
+        raise ValueError("PAGE XML image dimensions are invalid.")
+    scale_x = image.width / source_width
+    scale_y = image.height / source_height
+    source_left = max(0.0, min(point[0] for point in points))
+    source_top = max(0.0, min(point[1] for point in points))
+    source_right = min(float(source_width), max(point[0] for point in points))
+    source_bottom = min(float(source_height), max(point[1] for point in points))
+    left = max(0, min(image.width, int(source_left * scale_x)))
+    top = max(0, min(image.height, int(source_top * scale_y)))
+    right = max(0, min(image.width, int(source_right * scale_x + 0.999)))
+    bottom = max(0, min(image.height, int(source_bottom * scale_y + 0.999)))
+    if right <= left or bottom <= top:
+        raise ValueError(
+            "Target region produces an empty crop "
+            f"(image={image.width}x{image.height}, source={source_width}x{source_height}, "
+            f"bbox={source_left},{source_top},{source_right},{source_bottom})."
+        )
+    return image.crop((left, top, right, bottom)), source_left, source_top, scale_x, scale_y
+
+
 def page_xml_image_size(xml_bytes: bytes) -> tuple[int, int] | None:
-    root = parse_xml(xml_bytes)
+    return page_xml_image_size_from_root(parse_xml(xml_bytes))
+
+
+def page_xml_image_size_from_root(root: etree._Element) -> tuple[int, int] | None:
     page = next((element for element in root.iter() if local_name(element.tag) == "Page"), None)
     if page is None:
         return None
@@ -263,7 +312,13 @@ def page_xml_image_size(xml_bytes: bytes) -> tuple[int, int] | None:
 
 
 def page_xml_region_points(xml_bytes: bytes, region_id: str) -> list[tuple[float, float]]:
-    root = parse_xml(xml_bytes)
+    return page_xml_region_points_from_root(parse_xml(xml_bytes), region_id)
+
+
+def page_xml_region_points_from_root(
+    root: etree._Element,
+    region_id: str,
+) -> list[tuple[float, float]]:
     region = find_by_local_name_and_id(root, "TextRegion", region_id)
     if region is None:
         raise ValueError(f"Selected region {region_id} is missing from PAGE XML.")
@@ -289,6 +344,27 @@ def merge_region_layout_xml(
     scale_y: float,
 ) -> bytes:
     original_root = parse_xml(original_xml)
+    merge_region_layout_root(
+        original_root,
+        layout_xml,
+        region_id,
+        offset_x,
+        offset_y,
+        scale_x,
+        scale_y,
+    )
+    return etree.tostring(original_root, encoding="utf-8", xml_declaration=True)
+
+
+def merge_region_layout_root(
+    original_root: etree._Element,
+    layout_xml: bytes,
+    region_id: str,
+    offset_x: float,
+    offset_y: float,
+    scale_x: float,
+    scale_y: float,
+) -> None:
     layout_root = parse_xml(layout_xml)
     target_namespace = namespace_uri(original_root.tag)
 
@@ -309,9 +385,6 @@ def merge_region_layout_xml(
         translate_page_xml_geometry(copied, offset_x, offset_y, scale_x, scale_y)
         target_region.insert(insert_at, copied)
         insert_at += 1
-
-    return etree.tostring(original_root, encoding="utf-8", xml_declaration=True)
-
 
 def text_line_insert_index(region: etree._Element) -> int:
     for index, child in enumerate(region):
@@ -400,3 +473,12 @@ app = create_larex_action_app(
     dispatch_secret_env=DISPATCH_SECRET_ENV,
     handler=process_run,
 )
+
+
+@app.get("/ready")
+async def readiness():
+    if RUN_SEMAPHORE.locked():
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse({"status": "busy"}, status_code=503)
+    return {"status": "ready", "capacity": MAX_CONCURRENT_RUNS}

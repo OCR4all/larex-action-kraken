@@ -46,7 +46,9 @@ async def test_process_run_submits_each_page_before_processing_next(monkeypatch)
 
     async def segment_page(_ctx, _action_input, page, _work_dir):
         context.events.append(("segment", page.id))
-        return b"<PcGts/>"
+        output = _work_dir / f"{page.id}.xml"
+        output.write_bytes(b"<PcGts/>")
+        return output
 
     monkeypatch.setattr(main, "segment_page", segment_page)
 
@@ -69,7 +71,9 @@ async def test_process_run_stops_without_completion_when_page_fails(monkeypatch)
     async def segment_page(_ctx, _action_input, page, _work_dir):
         if page.id == "page-2":
             raise RuntimeError("boom")
-        return b"<PcGts/>"
+        output = _work_dir / f"{page.id}.xml"
+        output.write_bytes(b"<PcGts/>")
+        return output
 
     monkeypatch.setattr(main, "segment_page", segment_page)
 

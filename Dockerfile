@@ -32,9 +32,12 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libglib2.0-0 \
         libgl1 \
+    && useradd --create-home --uid 10001 --shell /usr/sbin/nologin larex-action \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/venv /opt/venv
+
+USER 10001:10001
 
 EXPOSE 9000
 
