@@ -10,6 +10,7 @@ targets:
 endpoint:
   url: https://kraken.example.org/dispatch
   healthUrl: https://kraken.example.org/health
+  preflightUrl: https://kraken.example.org/preflight
   timeoutSeconds: 30
   auth:
     type: hmac
