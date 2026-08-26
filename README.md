@@ -33,6 +33,8 @@ endpoint:
 
 Create the endpoint secret in LAREX under **Admin -> Actions -> Endpoint Secrets** and copy the one-time revealed value into the processor environment as `LAREX_DISPATCH_HMAC_SECRET`.
 
+The supplied definition marks page images as required. PAGE-targeted segmentation treats existing PAGE XML as optional, while REGION-targeted segmentation requires it to resolve and merge the selected region geometry.
+
 ## Configuration
 
 | Variable | Default | Description |
