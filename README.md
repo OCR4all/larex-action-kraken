@@ -120,4 +120,10 @@ uv run pytest
 docker build -t larex-action-kraken:test .
 ```
 
+To prepare and publish a release from a clean `main` checkout, run
+`./scripts/release.sh 0.4.0`. The helper updates `pyproject.toml` and
+`uv.lock`, runs the tests, creates a conventional release commit, pushes the
+`v0.4.0` tag, and creates the GitHub release. Release candidate versions such
+as `0.4.0rc1` are also accepted.
+
 The tests focus on the local PAGE XML geometry and merge helpers. Full dispatch behavior is covered by the `larex-action-sdk` integration at runtime.
