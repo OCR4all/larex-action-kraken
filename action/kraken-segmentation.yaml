@@ -5,16 +5,14 @@ description: Runs Kraken OCR baseline segmentation on selected page images and i
 category: LAYOUT
 targets:
   - PAGE
-  - REGION
 
 endpoint:
-  url: https://kraken.example.org/dispatch
-  healthUrl: https://kraken.example.org/health
-  preflightUrl: https://kraken.example.org/preflight
+  url: http://10.80.213.10/kraken-dev/dispatch
+  healthUrl: http://10.80.213.10/kraken-dev/health
   timeoutSeconds: 30
   auth:
     type: hmac
-    secretRef: kraken-segmentation-v1
+    secretRef: kraken-dev-segmentation-v1
 
 access:
   execute: CURATOR
@@ -23,8 +21,8 @@ locking:
   mode: PAGES
 
 inputs:
-  images: true
-  xml: true
+  images:
+    level: required
 
 outputs:
   xml:
@@ -36,3 +34,23 @@ outputs:
 concurrency:
   maxActiveRuns: 1
   scope: PROJECT
+
+parameters:
+  device:
+    type: string
+    default: cuda:0
+    description: Compute device for inference (e.g. 'cpu', 'cuda:0',...).
+  model:
+    type: string
+    description: Custom Kraken segmentation model. If omitted, Kraken's default segmentation model is used.
+  mode:
+    type: string
+    default: all
+    description: Segmentation output to generate. The effective output is limited by what the selected model provides. [lines, regions, all]
+  fallback:
+    type: number
+    description: Fallback bounding box height (in pixels) used when text line polygonization fails.
+  sort:
+    type: boolean
+    default: false
+    description: Sort regions/lines according to the model's reading-order heuristics after segmentation.

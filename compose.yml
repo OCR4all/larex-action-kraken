@@ -1,0 +1,37 @@
+services:
+  action-kraken:
+    container_name: larex-action-kraken-dev
+
+    build:
+      context: ./
+      dockerfile: Dockerfile
+
+    env_file:
+      - .env
+
+    environment:
+      LAREX_DISPATCH_HMAC_SECRET: ${LAREX_DISPATCH_HMAC_SECRET:?Secret required}
+      LAREX_PROCESSOR_ID: ${LAREX_PROCESSOR_ID:-kraken-segmentation}
+      LAREX_ALLOWED_CALLBACK_ORIGINS: ${LAREX_ACTIONS_CALLBACK_ALLOWED_ORIGINS:-http://app:8080}
+      KRAKEN_MODELS_BASE_PATH: /models
+      KRAKEN_MAX_CONCURRENT_RUNS: ${KRAKEN_MAX_CONCURRENT_RUNS:-1}
+
+    ports:
+      - "${KRAKEN_BIND_ADDRESS:-0.0.0.0}:${KRAKEN_PORT:-9000}:9000"
+
+    volumes:
+      - "${KRAKEN_MODELS_DIR}:/models"
+
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:9000/health', timeout=5)"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    stop_grace_period: 30s
+    restart: unless-stopped
