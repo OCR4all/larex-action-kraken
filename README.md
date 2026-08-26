@@ -120,10 +120,15 @@ uv run pytest
 docker build -t larex-action-kraken:test .
 ```
 
-To prepare and publish a release from a clean `main` checkout, run
-`./scripts/release.sh 0.4.0`. The helper updates `pyproject.toml` and
-`uv.lock`, runs the tests, creates a conventional release commit, pushes the
-`v0.4.0` tag, and creates the GitHub release. Release candidate versions such
-as `0.4.0rc1` are also accepted.
+Releases are automated by the `python-semantic-release` workflow. Conventional
+commits on `main` determine the next version (`feat` → minor, `fix`/`perf` →
+patch, and breaking changes → major). The workflow verifies the processor,
+updates `pyproject.toml` and `uv.lock`, creates the release commit/tag and GitHub
+release, and triggers the tagged GHCR image build. Run it manually from the
+Actions tab when you need to force a bump level or create a prerelease.
+
+Configure a repository secret named `RELEASE_TOKEN` with a GitHub token that has
+Contents read/write access. A PAT is required so the generated
+tag triggers the existing image publication workflow.
 
 The tests focus on the local PAGE XML geometry and merge helpers. Full dispatch behavior is covered by the `larex-action-sdk` integration at runtime.
