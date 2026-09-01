@@ -703,10 +703,12 @@ name = "larex-action-kraken"
 version = "0.4.0"
 source = { editable = "." }
 dependencies = [
+    { name = "click" },
     { name = "kraken" },
     { name = "larex-action-sdk", extra = ["fastapi"] },
     { name = "lxml" },
     { name = "pillow" },
+    { name = "platformdirs" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -718,10 +720,12 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "click", specifier = ">=8,<9" },
     { name = "kraken", specifier = "==7.0.2" },
-    { name = "larex-action-sdk", extras = ["fastapi"], specifier = ">=0.12.0,<0.13" },
+    { name = "larex-action-sdk", extras = ["fastapi"], specifier = ">=0.14.0,<0.15" },
     { name = "lxml", specifier = ">=5,<7" },
     { name = "pillow", specifier = ">=10,<13" },
+    { name = "platformdirs", specifier = ">=4,<5" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8,<9" },
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=1,<2" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.38,<0.39" },
@@ -730,15 +734,15 @@ provides-extras = ["test"]
 
 [[package]]
 name = "larex-action-sdk"
-version = "0.12.0"
+version = "0.14.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1b/ce/4fc6424a3854bfb44704d33543323e5c5536cbc23079189c8d88f4489630/larex_action_sdk-0.12.0.tar.gz", hash = "sha256:5dbaeee835f15246155fe75cb7101b47baeefd446bf0d73f3f9ed7b357bb5a77", size = 42149, upload-time = "2026-08-26T10:54:09.681Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b6/c7/b4e93592fbca43b3c327a98f9e2b00490a7afbf8b29b3fd1435160b5ae7c/larex_action_sdk-0.14.0.tar.gz", hash = "sha256:ea3d805d627a1aafbc55668d7f64551f90bcadf5bc453ccaa0b782138a0fab0b", size = 51352, upload-time = "2026-09-01T08:05:19.975Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5a/f0/b9684a62eda4d1c50b3ca9fe08ba31561e3fdb70483b1d746516bbad4bb3/larex_action_sdk-0.12.0-py3-none-any.whl", hash = "sha256:61134fc7bc229f01e69e60eebcd22e2321c3ae5b8007d4b097492d3d58467df1", size = 21259, upload-time = "2026-08-26T10:54:08.61Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/ea/dfa2ddf53ebccabe113696f726aa14c614371e81ca5e3b80e94d3a60c9cb/larex_action_sdk-0.14.0-py3-none-any.whl", hash = "sha256:7ab817e427bc8787a7394541d1c58e3b740d36302ffb94ebd5e44bd6a26d64fb", size = 25382, upload-time = "2026-09-01T08:05:18.54Z" },
 ]
 
 [package.optional-dependencies]

@@ -11,6 +11,7 @@ endpoint:
   url: https://kraken.example.org/dispatch
   healthUrl: https://kraken.example.org/health
   preflightUrl: https://kraken.example.org/preflight
+  parameterValuesUrl: https://kraken.example.org/parameter-values
   timeoutSeconds: 30
   auth:
     type: hmac
@@ -40,3 +41,11 @@ outputs:
 concurrency:
   maxActiveRuns: 1
   scope: PROJECT
+
+parameters:
+  segmentationModel:
+    type: string
+    default: ""
+    description: Kraken segmentation model; the processor default uses its built-in or configured model.
+    allowedValues:
+      provider: krakenSegmentationModels

@@ -40,6 +40,80 @@ def pages(count: int):
     return [SimpleNamespace(id=f"page-{index}", name=f"Page {index}") for index in range(1, count + 1)]
 
 
+def test_discovers_nested_models_and_sorts_them(tmp_path):
+    nested = tmp_path / "trained" / "run-2"
+    nested.mkdir(parents=True)
+    second = nested / "z-model.mlmodel"
+    second.write_bytes(b"model")
+    first = tmp_path / "a-model.safetensors"
+    first.write_bytes(b"model")
+    ignored = tmp_path / "recognition.mlmodel"
+    ignored.write_bytes(b"recognition")
+
+    choices = main.discover_kraken_segmentation_models(
+        tmp_path,
+        search_directories=(),
+        validator=lambda path: path != ignored,
+    )
+
+    assert choices[0].value == ""
+    assert [choice.value for choice in choices[1:]] == [str(first), str(second)]
+
+
+def test_model_discovery_rejects_symlink_escape(tmp_path):
+    root = tmp_path / "models"
+    root.mkdir()
+    outside = tmp_path / "outside.mlmodel"
+    outside.write_bytes(b"model")
+    (root / "escaped.mlmodel").symlink_to(outside)
+
+    choices = main.discover_kraken_segmentation_models(
+        root,
+        search_directories=(),
+        validator=lambda _path: True,
+    )
+
+    assert [choice.value for choice in choices] == [""]
+
+
+def test_resolves_selected_model_and_processor_default(monkeypatch):
+    monkeypatch.setattr(main, "SEGMENTATION_MODEL", "configured.mlmodel")
+
+    assert (
+        main.segmentation_model_from_input(SimpleNamespace(parameters={"segmentationModel": "/models/trained.mlmodel"}))
+        == "/models/trained.mlmodel"
+    )
+    assert main.segmentation_model_from_input(SimpleNamespace(parameters={})) == "configured.mlmodel"
+
+
+def test_rejects_non_string_model_parameter():
+    with pytest.raises(TypeError, match="must be a string"):
+        main.segmentation_model_from_input(SimpleNamespace(parameters={"segmentationModel": 42}))
+
+
+@pytest.mark.asyncio
+async def test_selected_model_is_passed_to_kraken(tmp_path):
+    output_path = tmp_path / "output.xml"
+
+    class CommandContext:
+        command = None
+
+        async def run_subprocess(self, command, **_kwargs):
+            self.command = command
+            output_path.write_bytes(b"<PcGts/>")
+            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    context = CommandContext()
+    await main.run_kraken(
+        context,
+        tmp_path / "input.png",
+        output_path,
+        "/models/trained.mlmodel",
+    )
+
+    assert context.command[-2:] == ["-i", "/models/trained.mlmodel"]
+
+
 @pytest.mark.asyncio
 async def test_process_run_submits_each_page_before_processing_next(monkeypatch):
     context = FakeContext(pages(2))

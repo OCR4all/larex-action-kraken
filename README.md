@@ -26,6 +26,7 @@ endpoint:
   url: https://kraken.example.org/dispatch
   healthUrl: https://kraken.example.org/health
   preflightUrl: https://kraken.example.org/preflight
+  parameterValuesUrl: https://kraken.example.org/parameter-values
   auth:
     type: hmac
     secretRef: kraken-segmentation-v1
@@ -43,18 +44,26 @@ The supplied definition marks page images as required. PAGE-targeted segmentatio
 | `LAREX_PROCESSOR_ID` | `kraken-segmentation` | Processor id expected in dispatch headers. |
 | `LAREX_ALLOWED_CALLBACK_ORIGINS` | SDK default | Optional comma-separated LAREX callback origins accepted by the SDK. |
 | `LAREX_ACTION_ROUTE_PREFIXES` | empty | Optional comma-separated route prefixes, for example `/kraken`, that also expose prefixed `/dispatch`, `/preflight`, and health routes. |
+| `LAREX_SDK_TRANSPORT_LOGGING` | disabled | Set to `true` to log SDK pulls, heartbeats, downloads, uploads, retries, and failures locally. |
 | `KRAKEN_DEVICE` | `cpu` | Kraken device, for example `cpu`, `cuda`, or `mps`. |
 | `KRAKEN_PRECISION` | `32-true` | Kraken precision argument. |
 | `KRAKEN_TEXT_DIRECTION` | `horizontal-lr` | Text direction passed to Kraken segmentation. |
 | `KRAKEN_SEGMENTATION_MODEL` | empty | Optional Kraken segmentation model path/name. |
+| `KRAKEN_MODEL_DIRECTORY` | empty | Optional root containing selectable `.mlmodel` or `.safetensors` segmentation models. Nested directories are discovered recursively. |
 | `KRAKEN_MAX_PROCESS_SECONDS` | `900` | Per-page Kraken subprocess timeout. |
 | `KRAKEN_MAX_CONCURRENT_RUNS` | `1` | Maximum Kraken runs admitted concurrently in one processor instance. Increase only after measuring host/GPU memory. |
 
 `/health` is a liveness endpoint. `/preflight` is the authenticated LAREX
 configuration check; it verifies the HMAC secret and processor id and reports
-protocol and result capabilities. `/ready` returns `503` while all configured run
+protocol and result capabilities. The authenticated `/parameter-values` route
+discovers valid segmentation models from Kraken's normal model directories and
+`KRAKEN_MODEL_DIRECTORY`. `/ready` returns `503` while all configured run
 slots are occupied, allowing an orchestrator to stop routing additional work to a
 busy instance.
+
+SDK transport logging is written only to the processor's local stderr/stdout log
+stream; it does not send additional log heartbeats to LAREX. It describes SDK
+calls, not Kraken's internal progress between calls.
 
 When deploying behind a reverse proxy path such as `/kraken`, preserve that path
 when proxying to the container and set:
@@ -70,6 +79,7 @@ endpoint:
   url: http://gpu-host.example.org/kraken/dispatch
   healthUrl: http://gpu-host.example.org/kraken/health
   preflightUrl: http://gpu-host.example.org/kraken/preflight
+  parameterValuesUrl: http://gpu-host.example.org/kraken/parameter-values
 ```
 
 Do not strip `/kraken` before the request reaches the container. LAREX signs the
@@ -103,8 +113,17 @@ Run:
 docker run --rm -p 9000:9000 \
   -e LAREX_DISPATCH_HMAC_SECRET="secret-from-larex" \
   -e LAREX_ALLOWED_CALLBACK_ORIGINS="https://larex.example.org" \
+  -e LAREX_SDK_TRANSPORT_LOGGING=true \
+  -e KRAKEN_MODEL_DIRECTORY=/models \
+  -v /srv/larex/kraken-models:/models:ro \
   larex-action-kraken
 ```
+
+The model selector always contains the processor default. When
+`KRAKEN_SEGMENTATION_MODEL` is set, that is the default; otherwise Kraken's
+built-in `blla.mlmodel` is used. Mounted and locally installed model files are
+validated as segmentation models before being offered. The selected value is
+revalidated by LAREX immediately before dispatch.
 
 Published images are built by GitHub Actions and pushed to:
 

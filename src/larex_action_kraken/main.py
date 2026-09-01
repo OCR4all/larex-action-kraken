@@ -2,17 +2,35 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import logging
 import os
 import re
 import tempfile
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 
-from larex_actions import ActionContext
+from click import get_app_dir
+from larex_actions import ActionContext, ParameterChoice
 from larex_actions.fastapi import create_larex_action_app
 from lxml import etree
 from PIL import Image
+from platformdirs import user_data_dir
+
+
+def configure_sdk_transport_logging() -> None:
+    enabled = os.getenv("LAREX_SDK_TRANSPORT_LOGGING", "").strip().lower()
+    if enabled not in {"1", "true", "yes", "on"}:
+        return
+    sdk_logger = logging.getLogger("larex_actions.transport")
+    sdk_logger.setLevel(logging.DEBUG)
+    if not sdk_logger.hasHandlers():
+        sdk_logger.addHandler(logging.StreamHandler())
+        sdk_logger.propagate = False
+
+
+configure_sdk_transport_logging()
 
 
 def positive_int_env(name: str, default: int) -> int:
@@ -34,6 +52,7 @@ DEVICE = os.getenv("KRAKEN_DEVICE", "cpu")
 PRECISION = os.getenv("KRAKEN_PRECISION", "32-true")
 TEXT_DIRECTION = os.getenv("KRAKEN_TEXT_DIRECTION", "horizontal-lr")
 SEGMENTATION_MODEL = os.getenv("KRAKEN_SEGMENTATION_MODEL", "").strip()
+MODEL_DIRECTORY = os.getenv("KRAKEN_MODEL_DIRECTORY", "").strip()
 MAX_PROCESS_SECONDS = positive_int_env("KRAKEN_MAX_PROCESS_SECONDS", 900)
 MAX_CONCURRENT_RUNS = positive_int_env("KRAKEN_MAX_CONCURRENT_RUNS", 1)
 PROGRESS_COMPLETE_BEFORE_UPLOAD = 95
@@ -48,6 +67,75 @@ IMAGE_EXTENSIONS = {
     "image/webp": ".webp",
     "image/bmp": ".bmp",
 }
+
+MODEL_EXTENSIONS = {".mlmodel", ".safetensors"}
+
+
+def default_model_directories() -> tuple[Path, ...]:
+    return (
+        Path(user_data_dir("htrmopo")),
+        Path(get_app_dir("kraken")),
+    )
+
+
+def is_kraken_segmentation_model(path: Path) -> bool:
+    try:
+        from kraken.tasks import SegmentationTaskModel
+
+        SegmentationTaskModel.load_model(path)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return False
+    return True
+
+
+def discover_kraken_segmentation_models(
+    model_directory: str | Path | None = MODEL_DIRECTORY,
+    search_directories: Sequence[Path] | None = None,
+    validator: Callable[[Path], bool] = is_kraken_segmentation_model,
+) -> list[ParameterChoice]:
+    default_label = (
+        f"Processor default ({SEGMENTATION_MODEL})" if SEGMENTATION_MODEL else "Kraken built-in default (blla.mlmodel)"
+    )[:256]
+    choices = [ParameterChoice(value="", label=default_label)]
+    roots = list(search_directories if search_directories is not None else default_model_directories())
+    if model_directory:
+        roots.append(Path(model_directory).expanduser())
+
+    discovered: dict[Path, str] = {}
+    for configured_root in roots:
+        try:
+            root = configured_root.resolve(strict=True)
+        except OSError:
+            continue
+        if not root.is_dir():
+            continue
+        for candidate in root.rglob("*"):
+            if candidate.suffix.lower() not in MODEL_EXTENSIONS:
+                continue
+            try:
+                resolved = candidate.resolve(strict=True)
+            except OSError:
+                continue
+            if not resolved.is_file() or not resolved.is_relative_to(root):
+                continue
+            if len(str(resolved)) > 1024:
+                continue
+            if resolved in discovered or not validator(resolved):
+                continue
+            relative = resolved.relative_to(root).as_posix()
+            discovered[resolved] = f"{relative} ({root.name})"[:256]
+
+    for path, label in sorted(discovered.items(), key=lambda item: (item[1].casefold(), str(item[0])))[:999]:
+        choices.append(ParameterChoice(value=str(path), label=label))
+    return choices
+
+
+def segmentation_model_from_input(action_input) -> str:
+    parameters = getattr(action_input, "parameters", {}) or {}
+    value = parameters.get("segmentationModel", "")
+    if not isinstance(value, str):
+        raise TypeError("segmentationModel must be a string.")
+    return value.strip() or SEGMENTATION_MODEL
 
 
 async def process_run(ctx: ActionContext) -> None:
@@ -110,7 +198,7 @@ async def segment_page(ctx: ActionContext, action_input, page, work_dir: Path) -
     if is_region_target(action_input):
         return await segment_selected_regions(ctx, action_input, page, image_path, work_dir)
 
-    await run_kraken(ctx, image_path, output_path)
+    await run_kraken(ctx, image_path, output_path, segmentation_model_from_input(action_input))
     return output_path
 
 
@@ -129,6 +217,7 @@ async def segment_selected_regions(
     await ctx.download_to_path(page.xml[0], original_xml_path)
     original_root = parse_xml(original_xml_path.read_bytes())
     page_image_size = page_xml_image_size_from_root(original_root)
+    segmentation_model = segmentation_model_from_input(action_input)
     for region_id in selected_region_ids(action_input, page.id):
         await ctx.check_cancelled()
         region_points = page_xml_region_points_from_root(original_root, region_id)
@@ -140,7 +229,7 @@ async def segment_selected_regions(
             source_size=page_image_size,
         )
         crop_output_path = work_dir / f"{safe_stem(region_id)}.xml"
-        await run_kraken(ctx, crop_path, crop_output_path)
+        await run_kraken(ctx, crop_path, crop_output_path, segmentation_model)
         merge_region_layout_root(
             original_root,
             crop_output_path.read_bytes(),
@@ -179,7 +268,12 @@ def page_progress(completed_pages: int, total_pages: int) -> int:
     return int((completed_pages / total_pages) * PROGRESS_COMPLETE_BEFORE_UPLOAD)
 
 
-async def run_kraken(ctx: ActionContext, image_path: Path, output_path: Path) -> None:
+async def run_kraken(
+    ctx: ActionContext,
+    image_path: Path,
+    output_path: Path,
+    segmentation_model: str = SEGMENTATION_MODEL,
+) -> None:
     command = [
         "kraken",
         "-x",
@@ -195,8 +289,8 @@ async def run_kraken(ctx: ActionContext, image_path: Path, output_path: Path) ->
         "-d",
         TEXT_DIRECTION,
     ]
-    if SEGMENTATION_MODEL:
-        command.extend(["-i", SEGMENTATION_MODEL])
+    if segmentation_model:
+        command.extend(["-i", segmentation_model])
 
     result = await ctx.run_subprocess(
         command,
@@ -472,6 +566,9 @@ app = create_larex_action_app(
     processor_id=PROCESSOR_ID,
     dispatch_secret_env=DISPATCH_SECRET_ENV,
     handler=process_run,
+    parameter_value_providers={
+        "krakenSegmentationModels": discover_kraken_segmentation_models,
+    },
 )
 
 
