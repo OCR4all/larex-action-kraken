@@ -14,7 +14,7 @@ authors = [
 ]
 dependencies = [
   "click>=8,<9",
-  "kraken==7.0.2",
+  "kraken==7.1.0",
   "larex-action-sdk[fastapi]>=0.14.0,<0.15",
   "lxml>=5,<7",
   "pillow>=10,<13",
