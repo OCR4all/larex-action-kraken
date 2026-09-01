@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.5.0 (2026-09-01)
+
+### Features
+
+- Discover available segmentation models
+  ([`3e58ffe`](https://github.com/OCR4all/larex-action-kraken/commit/3e58ffe8f8a42e03cfefe9d786e4d00ea844abed))
+
+
 ## v0.4.0 (2026-08-26)
 
 ### Chores
