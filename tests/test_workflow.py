@@ -29,10 +29,13 @@ class FakeContext:
     def result_builder(self):
         return ResultBuilder()
 
-    async def submit_page_results(self, page_id, results=None, message=None, *, outcome=None):
+    async def submit_page_results(
+        self, page_id, results=None, message=None, *, page_status=None, reason=None, warnings=None
+    ):
         self.events.append(("submit", (page_id, len(results.files) if results else 0)))
-        if outcome is not None and outcome.status == "FAILED":
-            self.events.append(("failed", outcome.page_id))
+        if page_status == "FAILED":
+            assert reason
+            self.events.append(("failed", page_id))
 
     async def complete(self, results=None, message=None):
         self.events.append(("complete", message))
@@ -193,11 +196,15 @@ async def test_server_page_rejection_does_not_stop_following_pages(monkeypatch):
     context = FakeContext(pages(2))
     original_submit = context.submit_page_results
 
-    async def submit(page_id, results=None, message=None, *, outcome=None):
+    async def submit(
+        page_id, results=None, message=None, *, page_status=None, reason=None, warnings=None
+    ):
         if page_id == "page-1":
             request = httpx.Request("POST", "https://larex.example/results")
             raise PageResultRejected("Invalid output", request=request, response=httpx.Response(422))
-        await original_submit(page_id, results, message, outcome=outcome)
+        await original_submit(
+            page_id, results, message, page_status=page_status, reason=reason, warnings=warnings
+        )
 
     async def segment_page(_ctx, _input, page, work_dir):
         output = work_dir / f"{page.id}.xml"

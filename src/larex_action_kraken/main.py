@@ -14,7 +14,12 @@ from functools import lru_cache
 from pathlib import Path
 
 from click import get_app_dir
-from larex_actions import ActionContext, ParameterChoice, PageOutcome, PageResultRejected, RunReportsUnsupported
+from larex_actions import (
+    ActionContext,
+    PageResultRejected,
+    ParameterChoice,
+    RunReportsUnsupported,
+)
 from larex_actions.fastapi import create_larex_action_app
 from lxml import etree
 from PIL import Image, UnidentifiedImageError
@@ -207,7 +212,8 @@ async def _process_run(ctx: ActionContext) -> None:
                 failed_count += 1
                 await ctx.submit_page_results(
                     page.id,
-                    outcome=PageOutcome(pageId=page.id, status="FAILED", message=str(error)),
+                    page_status="FAILED",
+                    reason=str(error),
                 )
             else:
                 results = ctx.result_builder()
@@ -218,8 +224,9 @@ async def _process_run(ctx: ActionContext) -> None:
                 )
                 try:
                     await ctx.submit_page_results(
-                        page.id, results, f"Finished segmentation for page {index}/{total}",
-                        outcome=PageOutcome(pageId=page.id),
+                        page.id,
+                        results,
+                        f"Finished segmentation for page {index}/{total}",
                     )
                 except PageResultRejected:
                     failed_count += 1

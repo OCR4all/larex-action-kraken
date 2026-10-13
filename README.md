@@ -154,9 +154,9 @@ The tests focus on the local PAGE XML geometry and merge helpers. Full dispatch 
 
 ## Run reports
 
-This version requires LAREX `runReports` support and SDK 0.19. Deploy LAREX first,
+This version requires LAREX `runReports` support and SDK 0.20. Deploy LAREX first,
 publish the SDK, then run `uv lock --upgrade-package larex-action-sdk` before
-building or releasing the processor. SDK 0.18 does not provide these interfaces.
+building or releasing the processor. SDK 0.19 predates the simplified incremental interface.
 
 Recoverable page errors are included in the LAREX report. Successful outputs are
 retained, and Retry selects failed or unfinished pages. Fatal runtime,
