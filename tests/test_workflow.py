@@ -9,7 +9,7 @@ from larex_action_kraken import main
 
 class FakeContext:
     def __init__(self, pages):
-        self.input = SimpleNamespace(pages=pages)
+        self.input = SimpleNamespace(pages=pages, parameters={}, capabilities=SimpleNamespace(run_reports=True))
         self.events: list[tuple[str, object]] = []
 
     async def pull_input(self):
@@ -29,11 +29,18 @@ class FakeContext:
     def result_builder(self):
         return ResultBuilder()
 
-    async def submit_page_results(self, page_id, results, message=None):
-        self.events.append(("submit", (page_id, len(results.files))))
+    async def submit_page_results(self, page_id, results=None, message=None, *, outcome=None):
+        self.events.append(("submit", (page_id, len(results.files) if results else 0)))
+        if outcome is not None and outcome.status == "FAILED":
+            self.events.append(("failed", outcome.page_id))
 
     async def complete(self, results=None, message=None):
         self.events.append(("complete", message))
+
+
+@pytest.fixture(autouse=True)
+def validate_runtime(monkeypatch):
+    monkeypatch.setattr(main, "validate_segmentation_runtime", lambda _model: None)
 
 
 def pages(count: int):
@@ -156,3 +163,73 @@ async def test_process_run_stops_without_completion_when_page_fails(monkeypatch)
 
     assert ("submit", ("page-1", 1)) in context.events
     assert not any(event[0] == "complete" for event in context.events)
+
+
+@pytest.mark.asyncio
+async def test_recoverable_page_failure_continues_and_is_acknowledged(monkeypatch):
+    context = FakeContext(pages(3))
+
+    async def segment_page(_ctx, _input, page, work_dir):
+        if page.id == "page-2":
+            raise main.PageProcessingError("Unreadable page")
+        output = work_dir / f"{page.id}.xml"
+        output.write_bytes(b"<PcGts/>")
+        return output
+
+    monkeypatch.setattr(main, "segment_page", segment_page)
+    await main.process_run(context)
+    assert ("failed", "page-2") in context.events
+    assert ("submit", ("page-3", 1)) in context.events
+    assert context.events[-1] == (
+        "complete", "Kraken segmentation produced 2 PAGE XML file(s). 1 page(s) failed."
+    )
+
+
+@pytest.mark.asyncio
+async def test_server_page_rejection_does_not_stop_following_pages(monkeypatch):
+    import httpx
+    from larex_actions import PageResultRejected
+
+    context = FakeContext(pages(2))
+    original_submit = context.submit_page_results
+
+    async def submit(page_id, results=None, message=None, *, outcome=None):
+        if page_id == "page-1":
+            request = httpx.Request("POST", "https://larex.example/results")
+            raise PageResultRejected("Invalid output", request=request, response=httpx.Response(422))
+        await original_submit(page_id, results, message, outcome=outcome)
+
+    async def segment_page(_ctx, _input, page, work_dir):
+        output = work_dir / f"{page.id}.xml"
+        output.write_bytes(b"<PcGts/>")
+        return output
+
+    monkeypatch.setattr(context, "submit_page_results", submit)
+    monkeypatch.setattr(main, "segment_page", segment_page)
+    await main.process_run(context)
+    assert ("submit", ("page-2", 1)) in context.events
+    assert "1 page(s) failed" in context.events[-1][1]
+
+
+@pytest.mark.asyncio
+async def test_shared_model_failure_stops_before_any_page(monkeypatch):
+    context = FakeContext(pages(2))
+
+    def invalid_model(_name):
+        raise RuntimeError("Model missing")
+
+    monkeypatch.setattr(main, "validate_segmentation_runtime", invalid_model)
+    with pytest.raises(RuntimeError, match="Model missing"):
+        await main.process_run(context)
+    assert not any(event[0] in {"submit", "complete"} for event in context.events)
+
+
+@pytest.mark.asyncio
+async def test_old_servers_are_rejected_before_any_page():
+    from larex_actions import RunReportsUnsupported
+
+    context = FakeContext(pages(1))
+    context.input.capabilities.run_reports = False
+    with pytest.raises(RunReportsUnsupported):
+        await main.process_run(context)
+    assert context.events == []

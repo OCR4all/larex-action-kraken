@@ -9,13 +9,15 @@ import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from io import BytesIO
+from importlib import resources
+from functools import lru_cache
 from pathlib import Path
 
 from click import get_app_dir
-from larex_actions import ActionContext, ParameterChoice
+from larex_actions import ActionContext, ParameterChoice, PageOutcome, PageResultRejected, RunReportsUnsupported
 from larex_actions.fastapi import create_larex_action_app
 from lxml import etree
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 from platformdirs import user_data_dir
 
 
@@ -138,6 +140,38 @@ def segmentation_model_from_input(action_input) -> str:
     return value.strip() or SEGMENTATION_MODEL
 
 
+class PageProcessingError(RuntimeError):
+    """A failure limited to the current page."""
+
+
+@lru_cache(maxsize=8)
+def validate_segmentation_runtime(model_name: str) -> None:
+    # Match Kraken's model lookup before processing pages so missing/broken shared
+    # models fail the run once, rather than appearing as hundreds of page failures.
+    model = Path(model_name).expanduser() if model_name else Path(str(resources.files("kraken").joinpath("blla.mlmodel")))
+    candidates = [model]
+    if not model.is_absolute():
+        for directory in default_model_directories():
+            if directory.is_dir():
+                candidates.extend(directory.rglob(str(model)))
+    resolved = next((candidate for candidate in candidates if candidate.is_file()), None)
+    if resolved is None or not is_kraken_segmentation_model(resolved):
+        raise RuntimeError(f"Kraken segmentation model is missing or invalid: {model}")
+    if TEXT_DIRECTION not in {"horizontal-lr", "horizontal-rl", "vertical-lr", "vertical-rl"}:
+        raise ValueError(f"Invalid KRAKEN_TEXT_DIRECTION: {TEXT_DIRECTION}")
+    if PRECISION not in {"64-true", "32-true", "16-mixed", "bf16-mixed", "16-true", "bf16-true"}:
+        raise ValueError(f"Invalid KRAKEN_PRECISION: {PRECISION}")
+    import torch
+    if DEVICE != "cpu" and DEVICE != "mps" and not re.fullmatch(r"cuda(?::[0-9]+)?", DEVICE):
+        raise ValueError(f"Invalid KRAKEN_DEVICE: {DEVICE}")
+    if DEVICE.startswith("cuda") and not torch.cuda.is_available():
+        raise RuntimeError("Configured Kraken CUDA device is unavailable")
+    if DEVICE.startswith("cuda:") and int(DEVICE.split(":", 1)[1]) >= torch.cuda.device_count():
+        raise RuntimeError("Configured Kraken CUDA device index is unavailable")
+    if DEVICE == "mps" and not torch.backends.mps.is_available():
+        raise RuntimeError("Configured Kraken MPS device is unavailable")
+
+
 async def process_run(ctx: ActionContext) -> None:
     async with RUN_SEMAPHORE:
         await _process_run(ctx)
@@ -149,8 +183,12 @@ async def _process_run(ctx: ActionContext) -> None:
         await ctx.complete(message="Kraken segmentation received no pages.")
         return
 
+    if not action_input.capabilities.run_reports:
+        raise RunReportsUnsupported("Kraken segmentation requires LAREX runReports support")
+    await asyncio.to_thread(validate_segmentation_runtime, segmentation_model_from_input(action_input))
     total = len(action_input.pages)
     xml_count = 0
+    failed_count = 0
 
     with tempfile.TemporaryDirectory(prefix="larex-kraken-") as temp_dir:
         work_dir = Path(temp_dir)
@@ -162,20 +200,31 @@ async def _process_run(ctx: ActionContext) -> None:
                 raise_on_cancel=True,
             )
 
-            async with ctx.step(f"Kraken segmentation for {page.name}"):
-                output_path = await segment_page(ctx, action_input, page, work_dir)
+            try:
+                async with ctx.step(f"Kraken segmentation for {page.name}"):
+                    output_path = await segment_page(ctx, action_input, page, work_dir)
+            except (PageProcessingError, ValueError, etree.XMLSyntaxError, UnidentifiedImageError, TimeoutError) as error:
+                failed_count += 1
+                await ctx.submit_page_results(
+                    page.id,
+                    outcome=PageOutcome(pageId=page.id, status="FAILED", message=str(error)),
+                )
+            else:
                 results = ctx.result_builder()
                 results.add_xml_path(
                     page_id=page.id,
                     path=output_path,
                     file_name=f"{safe_stem(page.name or page.id)}.xml",
                 )
-                await ctx.submit_page_results(
-                    page.id,
-                    results,
-                    f"Finished segmentation for page {index}/{total}",
-                )
-                xml_count += 1
+                try:
+                    await ctx.submit_page_results(
+                        page.id, results, f"Finished segmentation for page {index}/{total}",
+                        outcome=PageOutcome(pageId=page.id),
+                    )
+                except PageResultRejected:
+                    failed_count += 1
+                else:
+                    xml_count += 1
 
             await ctx.heartbeat(
                 page_progress(index, total),
@@ -183,7 +232,10 @@ async def _process_run(ctx: ActionContext) -> None:
                 raise_on_cancel=True,
             )
 
-    await ctx.complete(message=result_message(xml_count))
+    message = result_message(xml_count)
+    if failed_count:
+        message += f" {failed_count} page(s) failed."
+    await ctx.complete(message=message)
 
 
 async def segment_page(ctx: ActionContext, action_input, page, work_dir: Path) -> Path:
@@ -303,10 +355,13 @@ async def run_kraken(
         stderr = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
         stdout = result.stdout.decode("utf-8", errors="replace") if result.stdout else ""
         output = (stderr or stdout).strip()
-        raise RuntimeError(f"Kraken segmentation failed with exit code {result.returncode}: {output}")
+        fatal_markers = ("out of memory", "cuda error", "invalid device", "no module named", "permission denied", "no space left")
+        if any(marker in output.lower() for marker in fatal_markers):
+            raise RuntimeError(f"Kraken runtime failed: {output}")
+        raise PageProcessingError(f"Kraken segmentation failed with exit code {result.returncode}: {output}")
 
     if not output_path.exists() or output_path.stat().st_size == 0:
-        raise RuntimeError("Kraken segmentation did not produce PAGE XML output.")
+        raise PageProcessingError("Kraken segmentation did not produce PAGE XML output.")
 
 
 @dataclass(frozen=True)

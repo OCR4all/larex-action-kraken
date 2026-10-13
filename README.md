@@ -151,3 +151,23 @@ Contents read/write access. A PAT is required so the generated
 tag triggers the existing image publication workflow.
 
 The tests focus on the local PAGE XML geometry and merge helpers. Full dispatch behavior is covered by the `larex-action-sdk` integration at runtime.
+
+## Run reports
+
+This version requires LAREX `runReports` support and SDK 0.19. Deploy LAREX first,
+publish the SDK, then run `uv lock --upgrade-package larex-action-sdk` before
+building or releasing the processor. SDK 0.18 does not provide these interfaces.
+
+Recoverable page errors are included in the LAREX report. Successful outputs are
+retained, and Retry selects failed or unfinished pages. Fatal runtime,
+configuration, transport errors, and cancellation still stop the run.
+
+For local cross-repository tests before SDK publication:
+
+```bash
+PYTHONPATH=../larex-action-sdk/src .venv/bin/python -m pytest
+```
+
+Kraken validates the shared segmentation model and runtime before processing
+pages, continues after identifiable page-processing failures, and acknowledges
+server-side page rejections without attempting to resubmit that page.
