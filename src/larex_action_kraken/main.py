@@ -529,8 +529,15 @@ def merge_region_layout_root(
         raise ValueError(f"Selected region {region_id} is missing from original PAGE XML.")
 
     existing_text_lines = [child for child in list(target_region) if local_name(child.tag) == "TextLine"]
+    removed_ids = {
+        element.get("id")
+        for text_line in existing_text_lines
+        for element in text_line.iter()
+        if element.get("id")
+    }
     for text_line in existing_text_lines:
         target_region.remove(text_line)
+    drop_relations_to(original_root, removed_ids)
 
     layout_text_lines = [element for element in layout_root.iter() if local_name(element.tag) == "TextLine"]
     insert_at = text_line_insert_index(target_region)
@@ -541,6 +548,24 @@ def merge_region_layout_root(
         translate_page_xml_geometry(copied, offset_x, offset_y, scale_x, scale_y)
         target_region.insert(insert_at, copied)
         insert_at += 1
+
+def drop_relations_to(root: etree._Element, removed_ids: set[str]) -> None:
+    if not removed_ids:
+        return
+    relations = [element for element in root.iter() if local_name(element.tag) == "Relation"]
+    for relation in relations:
+        references = {
+            child.get("regionRef")
+            for child in relation
+            if local_name(child.tag) in {"SourceRegionRef", "TargetRegionRef"}
+        }
+        if references.isdisjoint(removed_ids):
+            continue
+        container = relation.getparent()
+        container.remove(relation)
+        if not any(local_name(child.tag) == "Relation" for child in container):
+            container.getparent().remove(container)
+
 
 def text_line_insert_index(region: etree._Element) -> int:
     for index, child in enumerate(region):
@@ -553,6 +578,7 @@ def normalize_namespace(element: etree._Element, namespace: str | None) -> None:
     if namespace:
         for child in element.iter():
             child.tag = f"{{{namespace}}}{local_name(child.tag)}"
+        etree.cleanup_namespaces(element)
 
 
 def translate_page_xml_geometry(
