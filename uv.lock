@@ -721,7 +721,7 @@ test = [
 requires-dist = [
     { name = "click", specifier = ">=8,<9" },
     { name = "kraken", specifier = "==7.1.0" },
-    { name = "larex-action-sdk", extras = ["fastapi"], specifier = ">=0.14.0,<0.15" },
+    { name = "larex-action-sdk", extras = ["fastapi"], specifier = ">=0.30.0,<0.31" },
     { name = "lxml", specifier = ">=5,<7" },
     { name = "pillow", specifier = ">=10,<13" },
     { name = "platformdirs", specifier = ">=4,<5" },
@@ -733,15 +733,15 @@ provides-extras = ["test"]
 
 [[package]]
 name = "larex-action-sdk"
-version = "0.14.0"
+version = "0.30.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b6/c7/b4e93592fbca43b3c327a98f9e2b00490a7afbf8b29b3fd1435160b5ae7c/larex_action_sdk-0.14.0.tar.gz", hash = "sha256:ea3d805d627a1aafbc55668d7f64551f90bcadf5bc453ccaa0b782138a0fab0b", size = 51352, upload-time = "2026-09-01T08:05:19.975Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e0/fe/4d18665a3232f11c40c8d20dd27c34c678e60013e493f1aeda960e58013a/larex_action_sdk-0.30.0.tar.gz", hash = "sha256:a2f74ed6e179235f7bbbd51bcc674ec54da5dd8fa262b4e8b6b96e6e438a53c1", size = 71501, upload-time = "2026-11-24T12:03:47.586Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7c/ea/dfa2ddf53ebccabe113696f726aa14c614371e81ca5e3b80e94d3a60c9cb/larex_action_sdk-0.14.0-py3-none-any.whl", hash = "sha256:7ab817e427bc8787a7394541d1c58e3b740d36302ffb94ebd5e44bd6a26d64fb", size = 25382, upload-time = "2026-09-01T08:05:18.54Z" },
+    { url = "https://files.pythonhosted.org/packages/64/07/82444544ad465189849399291060d1e2d05be69d72c6b81c4103489e770d/larex_action_sdk-0.30.0-py3-none-any.whl", hash = "sha256:a0b26e27cef2ca88221b5f5a417dd71b0c3d557d495bce5c349eb246f67ddc75", size = 30833, upload-time = "2026-11-24T12:03:46.313Z" },
 ]
 
 [package.optional-dependencies]

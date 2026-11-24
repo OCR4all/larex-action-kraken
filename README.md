@@ -57,9 +57,8 @@ The supplied definition marks page images as required. PAGE-targeted segmentatio
 configuration check; it verifies the HMAC secret and processor id and reports
 protocol and result capabilities. The authenticated `/parameter-values` route
 discovers valid segmentation models from Kraken's normal model directories and
-`KRAKEN_MODEL_DIRECTORY`. `/ready` returns `503` while all configured run
-slots are occupied, allowing an orchestrator to stop routing additional work to a
-busy instance.
+`KRAKEN_MODEL_DIRECTORY`. Dispatches beyond `KRAKEN_MAX_CONCURRENT_RUNS` are
+accepted and wait for a run slot.
 
 SDK transport logging is written only to the processor's local stderr/stdout log
 stream; it does not send additional log heartbeats to LAREX. It describes SDK
@@ -122,8 +121,9 @@ docker run --rm -p 9000:9000 \
 The model selector always contains the processor default. When
 `KRAKEN_SEGMENTATION_MODEL` is set, that is the default; otherwise Kraken's
 built-in `blla.mlmodel` is used. Mounted and locally installed model files are
-validated as segmentation models before being offered. The selected value is
-revalidated by LAREX immediately before dispatch.
+validated as segmentation models before being offered. The processor marks its
+default as the preselected choice. The selected value is revalidated by LAREX
+immediately before dispatch.
 
 Published images are built by GitHub Actions and pushed to:
 
@@ -151,3 +151,26 @@ Contents read/write access. A PAT is required so the generated
 tag triggers the existing image publication workflow.
 
 The tests focus on the local PAGE XML geometry and merge helpers. Full dispatch behavior is covered by the `larex-action-sdk` integration at runtime.
+
+## Run reports
+
+This version requires LAREX `runReports` support and SDK 0.30. To move to a newer
+SDK, run `uv lock --upgrade-package larex-action-sdk` after it is published.
+
+The SDK retries heartbeats, downloads, and result uploads while LAREX is
+unreachable, until LAREX's heartbeat timeout has passed, so a LAREX restart does
+not end a run.
+
+Recoverable page errors are included in the LAREX report. Successful outputs are
+retained, and Retry selects failed or unfinished pages. Fatal runtime,
+configuration, transport errors, and cancellation still stop the run.
+
+For local cross-repository tests before SDK publication:
+
+```bash
+PYTHONPATH=../larex-action-sdk/src .venv/bin/python -m pytest
+```
+
+Kraken validates the shared segmentation model and runtime before processing
+pages, continues after identifiable page-processing failures, and acknowledges
+server-side page rejections without attempting to resubmit that page.

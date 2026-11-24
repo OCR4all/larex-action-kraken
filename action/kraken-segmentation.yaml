@@ -2,7 +2,7 @@ version: 1
 id: kraken-segmentation
 name: Kraken Segmentation
 description: Runs Kraken OCR baseline segmentation on selected page images and imports PAGE XML.
-category: LAYOUT
+tags: [layout, segmentation]
 targets:
   - PAGE
   - REGION
@@ -47,7 +47,6 @@ concurrency:
 parameters:
   segmentationModel:
     type: string
-    default: ""
     description: Kraken segmentation model; the processor default uses its built-in or configured model.
     allowedValues:
       provider: krakenSegmentationModels

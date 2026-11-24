@@ -9,13 +9,20 @@ import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from io import BytesIO
+from importlib import resources
+from functools import lru_cache
 from pathlib import Path
 
 from click import get_app_dir
-from larex_actions import ActionContext, ParameterChoice
+from larex_actions import (
+    ActionContext,
+    PageResultRejected,
+    ParameterChoice,
+    RunReportsUnsupported,
+)
 from larex_actions.fastapi import create_larex_action_app
 from lxml import etree
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 from platformdirs import user_data_dir
 
 
@@ -55,8 +62,6 @@ SEGMENTATION_MODEL = os.getenv("KRAKEN_SEGMENTATION_MODEL", "").strip()
 MODEL_DIRECTORY = os.getenv("KRAKEN_MODEL_DIRECTORY", "").strip()
 MAX_PROCESS_SECONDS = positive_int_env("KRAKEN_MAX_PROCESS_SECONDS", 900)
 MAX_CONCURRENT_RUNS = positive_int_env("KRAKEN_MAX_CONCURRENT_RUNS", 1)
-PROGRESS_COMPLETE_BEFORE_UPLOAD = 95
-RUN_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_RUNS)
 
 IMAGE_EXTENSIONS = {
     "image/jpeg": ".jpg",
@@ -96,7 +101,7 @@ def discover_kraken_segmentation_models(
     default_label = (
         f"Processor default ({SEGMENTATION_MODEL})" if SEGMENTATION_MODEL else "Kraken built-in default (blla.mlmodel)"
     )[:256]
-    choices = [ParameterChoice(value="", label=default_label)]
+    choices = [ParameterChoice(value="", label=default_label, default=True)]
     roots = list(search_directories if search_directories is not None else default_model_directories())
     if model_directory:
         roots.append(Path(model_directory).expanduser())
@@ -138,52 +143,90 @@ def segmentation_model_from_input(action_input) -> str:
     return value.strip() or SEGMENTATION_MODEL
 
 
+class PageProcessingError(RuntimeError):
+    """A failure limited to the current page."""
+
+
+@lru_cache(maxsize=8)
+def validate_segmentation_runtime(model_name: str) -> None:
+    # Match Kraken's model lookup before processing pages so missing/broken shared
+    # models fail the run once, rather than appearing as hundreds of page failures.
+    model = Path(model_name).expanduser() if model_name else Path(str(resources.files("kraken").joinpath("blla.mlmodel")))
+    candidates = [model]
+    if not model.is_absolute():
+        for directory in default_model_directories():
+            if directory.is_dir():
+                candidates.extend(directory.rglob(str(model)))
+    resolved = next((candidate for candidate in candidates if candidate.is_file()), None)
+    if resolved is None or not is_kraken_segmentation_model(resolved):
+        raise RuntimeError(f"Kraken segmentation model is missing or invalid: {model}")
+    if TEXT_DIRECTION not in {"horizontal-lr", "horizontal-rl", "vertical-lr", "vertical-rl"}:
+        raise ValueError(f"Invalid KRAKEN_TEXT_DIRECTION: {TEXT_DIRECTION}")
+    if PRECISION not in {"64-true", "32-true", "16-mixed", "bf16-mixed", "16-true", "bf16-true"}:
+        raise ValueError(f"Invalid KRAKEN_PRECISION: {PRECISION}")
+    import torch
+    if DEVICE != "cpu" and DEVICE != "mps" and not re.fullmatch(r"cuda(?::[0-9]+)?", DEVICE):
+        raise ValueError(f"Invalid KRAKEN_DEVICE: {DEVICE}")
+    if DEVICE.startswith("cuda") and not torch.cuda.is_available():
+        raise RuntimeError("Configured Kraken CUDA device is unavailable")
+    if DEVICE.startswith("cuda:") and int(DEVICE.split(":", 1)[1]) >= torch.cuda.device_count():
+        raise RuntimeError("Configured Kraken CUDA device index is unavailable")
+    if DEVICE == "mps" and not torch.backends.mps.is_available():
+        raise RuntimeError("Configured Kraken MPS device is unavailable")
+
+
 async def process_run(ctx: ActionContext) -> None:
-    async with RUN_SEMAPHORE:
-        await _process_run(ctx)
-
-
-async def _process_run(ctx: ActionContext) -> None:
     action_input = await ctx.pull_input()
     if not action_input.pages:
         await ctx.complete(message="Kraken segmentation received no pages.")
         return
 
+    if not action_input.capabilities.run_reports:
+        raise RunReportsUnsupported("Kraken segmentation requires LAREX runReports support")
+    await asyncio.to_thread(validate_segmentation_runtime, segmentation_model_from_input(action_input))
     total = len(action_input.pages)
     xml_count = 0
+    failed_count = 0
 
     with tempfile.TemporaryDirectory(prefix="larex-kraken-") as temp_dir:
         work_dir = Path(temp_dir)
         for index, page in enumerate(action_input.pages, start=1):
-            await ctx.check_cancelled()
             await ctx.heartbeat(
-                page_progress(index - 1, total),
-                f"Segmenting page {index}/{total}: {page.name}",
+                status_message=f"Segmenting page {index}/{total}: {page.name}",
                 raise_on_cancel=True,
             )
 
-            async with ctx.step(f"Kraken segmentation for {page.name}"):
+            try:
                 output_path = await segment_page(ctx, action_input, page, work_dir)
+            except (PageProcessingError, ValueError, etree.XMLSyntaxError, UnidentifiedImageError, TimeoutError) as error:
+                failed_count += 1
+                await ctx.submit_page_results(
+                    page.id,
+                    page_status="FAILED",
+                    reason=str(error),
+                )
+            else:
                 results = ctx.result_builder()
                 results.add_xml_path(
                     page_id=page.id,
                     path=output_path,
                     file_name=f"{safe_stem(page.name or page.id)}.xml",
                 )
-                await ctx.submit_page_results(
-                    page.id,
-                    results,
-                    f"Finished segmentation for page {index}/{total}",
-                )
-                xml_count += 1
+                try:
+                    await ctx.submit_page_results(
+                        page.id,
+                        results,
+                        f"Finished segmentation for page {index}/{total}",
+                    )
+                except PageResultRejected:
+                    failed_count += 1
+                else:
+                    xml_count += 1
 
-            await ctx.heartbeat(
-                page_progress(index, total),
-                f"Finished segmentation for page {index}/{total}",
-                raise_on_cancel=True,
-            )
-
-    await ctx.complete(message=result_message(xml_count))
+    message = result_message(xml_count)
+    if failed_count:
+        message += f" {failed_count} page(s) failed."
+    await ctx.complete(message=message)
 
 
 async def segment_page(ctx: ActionContext, action_input, page, work_dir: Path) -> Path:
@@ -264,10 +307,6 @@ def selected_region_ids(action_input, page_id: str) -> list[str]:
     return region_ids
 
 
-def page_progress(completed_pages: int, total_pages: int) -> int:
-    return int((completed_pages / total_pages) * PROGRESS_COMPLETE_BEFORE_UPLOAD)
-
-
 async def run_kraken(
     ctx: ActionContext,
     image_path: Path,
@@ -303,10 +342,13 @@ async def run_kraken(
         stderr = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
         stdout = result.stdout.decode("utf-8", errors="replace") if result.stdout else ""
         output = (stderr or stdout).strip()
-        raise RuntimeError(f"Kraken segmentation failed with exit code {result.returncode}: {output}")
+        fatal_markers = ("out of memory", "cuda error", "invalid device", "no module named", "permission denied", "no space left")
+        if any(marker in output.lower() for marker in fatal_markers):
+            raise RuntimeError(f"Kraken runtime failed: {output}")
+        raise PageProcessingError(f"Kraken segmentation failed with exit code {result.returncode}: {output}")
 
     if not output_path.exists() or output_path.stat().st_size == 0:
-        raise RuntimeError("Kraken segmentation did not produce PAGE XML output.")
+        raise PageProcessingError("Kraken segmentation did not produce PAGE XML output.")
 
 
 @dataclass(frozen=True)
@@ -467,8 +509,15 @@ def merge_region_layout_root(
         raise ValueError(f"Selected region {region_id} is missing from original PAGE XML.")
 
     existing_text_lines = [child for child in list(target_region) if local_name(child.tag) == "TextLine"]
+    removed_ids = {
+        element.get("id")
+        for text_line in existing_text_lines
+        for element in text_line.iter()
+        if element.get("id")
+    }
     for text_line in existing_text_lines:
         target_region.remove(text_line)
+    drop_relations_to(original_root, removed_ids)
 
     layout_text_lines = [element for element in layout_root.iter() if local_name(element.tag) == "TextLine"]
     insert_at = text_line_insert_index(target_region)
@@ -479,6 +528,24 @@ def merge_region_layout_root(
         translate_page_xml_geometry(copied, offset_x, offset_y, scale_x, scale_y)
         target_region.insert(insert_at, copied)
         insert_at += 1
+
+def drop_relations_to(root: etree._Element, removed_ids: set[str]) -> None:
+    if not removed_ids:
+        return
+    relations = [element for element in root.iter() if local_name(element.tag) == "Relation"]
+    for relation in relations:
+        references = {
+            child.get("regionRef")
+            for child in relation
+            if local_name(child.tag) in {"SourceRegionRef", "TargetRegionRef"}
+        }
+        if references.isdisjoint(removed_ids):
+            continue
+        container = relation.getparent()
+        container.remove(relation)
+        if not any(local_name(child.tag) == "Relation" for child in container):
+            container.getparent().remove(container)
+
 
 def text_line_insert_index(region: etree._Element) -> int:
     for index, child in enumerate(region):
@@ -491,6 +558,7 @@ def normalize_namespace(element: etree._Element, namespace: str | None) -> None:
     if namespace:
         for child in element.iter():
             child.tag = f"{{{namespace}}}{local_name(child.tag)}"
+        etree.cleanup_namespaces(element)
 
 
 def translate_page_xml_geometry(
@@ -566,16 +634,13 @@ app = create_larex_action_app(
     processor_id=PROCESSOR_ID,
     dispatch_secret_env=DISPATCH_SECRET_ENV,
     handler=process_run,
+    max_concurrent_runs=MAX_CONCURRENT_RUNS,
+    processor_capabilities={
+        "incrementalPageResults": True,
+        "customFileResults": False,
+        "runReports": True,
+    },
     parameter_value_providers={
         "krakenSegmentationModels": discover_kraken_segmentation_models,
     },
 )
-
-
-@app.get("/ready")
-async def readiness():
-    if RUN_SEMAPHORE.locked():
-        from fastapi.responses import JSONResponse
-
-        return JSONResponse({"status": "busy"}, status_code=503)
-    return {"status": "ready", "capacity": MAX_CONCURRENT_RUNS}

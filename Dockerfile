@@ -18,7 +18,7 @@ RUN apt-get update \
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 
-RUN uv sync --frozen --no-dev --no-editable
+RUN uv sync --locked --no-dev --no-editable
 
 FROM python:3.12-slim
 
