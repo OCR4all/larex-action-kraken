@@ -1,4 +1,3 @@
-from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -18,13 +17,8 @@ class FakeContext:
     async def check_cancelled(self):
         self.events.append(("cancel", None))
 
-    async def heartbeat(self, progress, message, *, raise_on_cancel=False):
-        self.events.append(("heartbeat", progress))
-
-    @asynccontextmanager
-    async def step(self, name):
-        self.events.append(("step", name))
-        yield
+    async def heartbeat(self, progress_percent=None, status_message=None, *, raise_on_cancel=False):
+        self.events.append(("heartbeat", status_message))
 
     def result_builder(self):
         return ResultBuilder()
@@ -67,6 +61,7 @@ def test_discovers_nested_models_and_sorts_them(tmp_path):
     )
 
     assert choices[0].value == ""
+    assert [choice.default for choice in choices] == [True, False, False]
     assert [choice.value for choice in choices[1:]] == [str(first), str(second)]
 
 

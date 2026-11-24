@@ -62,8 +62,6 @@ SEGMENTATION_MODEL = os.getenv("KRAKEN_SEGMENTATION_MODEL", "").strip()
 MODEL_DIRECTORY = os.getenv("KRAKEN_MODEL_DIRECTORY", "").strip()
 MAX_PROCESS_SECONDS = positive_int_env("KRAKEN_MAX_PROCESS_SECONDS", 900)
 MAX_CONCURRENT_RUNS = positive_int_env("KRAKEN_MAX_CONCURRENT_RUNS", 1)
-PROGRESS_COMPLETE_BEFORE_UPLOAD = 95
-RUN_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_RUNS)
 
 IMAGE_EXTENSIONS = {
     "image/jpeg": ".jpg",
@@ -103,7 +101,7 @@ def discover_kraken_segmentation_models(
     default_label = (
         f"Processor default ({SEGMENTATION_MODEL})" if SEGMENTATION_MODEL else "Kraken built-in default (blla.mlmodel)"
     )[:256]
-    choices = [ParameterChoice(value="", label=default_label)]
+    choices = [ParameterChoice(value="", label=default_label, default=True)]
     roots = list(search_directories if search_directories is not None else default_model_directories())
     if model_directory:
         roots.append(Path(model_directory).expanduser())
@@ -178,11 +176,6 @@ def validate_segmentation_runtime(model_name: str) -> None:
 
 
 async def process_run(ctx: ActionContext) -> None:
-    async with RUN_SEMAPHORE:
-        await _process_run(ctx)
-
-
-async def _process_run(ctx: ActionContext) -> None:
     action_input = await ctx.pull_input()
     if not action_input.pages:
         await ctx.complete(message="Kraken segmentation received no pages.")
@@ -198,16 +191,13 @@ async def _process_run(ctx: ActionContext) -> None:
     with tempfile.TemporaryDirectory(prefix="larex-kraken-") as temp_dir:
         work_dir = Path(temp_dir)
         for index, page in enumerate(action_input.pages, start=1):
-            await ctx.check_cancelled()
             await ctx.heartbeat(
-                page_progress(index - 1, total),
-                f"Segmenting page {index}/{total}: {page.name}",
+                status_message=f"Segmenting page {index}/{total}: {page.name}",
                 raise_on_cancel=True,
             )
 
             try:
-                async with ctx.step(f"Kraken segmentation for {page.name}"):
-                    output_path = await segment_page(ctx, action_input, page, work_dir)
+                output_path = await segment_page(ctx, action_input, page, work_dir)
             except (PageProcessingError, ValueError, etree.XMLSyntaxError, UnidentifiedImageError, TimeoutError) as error:
                 failed_count += 1
                 await ctx.submit_page_results(
@@ -232,12 +222,6 @@ async def _process_run(ctx: ActionContext) -> None:
                     failed_count += 1
                 else:
                     xml_count += 1
-
-            await ctx.heartbeat(
-                page_progress(index, total),
-                f"Finished segmentation for page {index}/{total}",
-                raise_on_cancel=True,
-            )
 
     message = result_message(xml_count)
     if failed_count:
@@ -321,10 +305,6 @@ def selected_region_ids(action_input, page_id: str) -> list[str]:
             raise ValueError(f"Region-targeted run for page {page_id} does not contain region ids.")
         region_ids.extend(page_region_ids)
     return region_ids
-
-
-def page_progress(completed_pages: int, total_pages: int) -> int:
-    return int((completed_pages / total_pages) * PROGRESS_COMPLETE_BEFORE_UPLOAD)
 
 
 async def run_kraken(
@@ -654,16 +634,13 @@ app = create_larex_action_app(
     processor_id=PROCESSOR_ID,
     dispatch_secret_env=DISPATCH_SECRET_ENV,
     handler=process_run,
+    max_concurrent_runs=MAX_CONCURRENT_RUNS,
+    processor_capabilities={
+        "incrementalPageResults": True,
+        "customFileResults": False,
+        "runReports": True,
+    },
     parameter_value_providers={
         "krakenSegmentationModels": discover_kraken_segmentation_models,
     },
 )
-
-
-@app.get("/ready")
-async def readiness():
-    if RUN_SEMAPHORE.locked():
-        from fastapi.responses import JSONResponse
-
-        return JSONResponse({"status": "busy"}, status_code=503)
-    return {"status": "ready", "capacity": MAX_CONCURRENT_RUNS}
