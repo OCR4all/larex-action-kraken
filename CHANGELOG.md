@@ -2,6 +2,26 @@
 
 <!-- version list -->
 
+## v0.7.0 (2026-11-24)
+
+### Bug Fixes
+
+- **segmentation**: Keep merged lines in the input's PAGE namespace and drop relations to replaced
+  lines
+  ([`470f683`](https://github.com/OCR4all/larex-action-kraken/commit/470f68321107c752b9d74052a98e9aaf17ec3da4))
+
+- **segmentation**: Use SDK 0.20 page reporting interface
+  ([`70f7091`](https://github.com/OCR4all/larex-action-kraken/commit/70f70914c2407fbb49fad1afe55f6a619cdf2858))
+
+### Features
+
+- **segmentation**: Report page failures and continue processing
+  ([`8adcad2`](https://github.com/OCR4all/larex-action-kraken/commit/8adcad2661bb0ba3765d3244dc8f6dd57f17c23c))
+
+- **segmentation**: Support LAREX Action SDK 0.30 and drop the /ready route
+  ([`35631fc`](https://github.com/OCR4all/larex-action-kraken/commit/35631fca56b2d53d07dc658d5cc16d2047869bde))
+
+
 ## v0.6.0 (2026-10-08)
 
 
